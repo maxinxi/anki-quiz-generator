@@ -178,13 +178,15 @@ V10_QFMT = r"""{{IsBaoMing}}
 </script>"""
 
 # ══════════════════════════════════════════════════════════════
-# QFMT 动态乱序版（V10.1）— 每次出现题目随机重排选项
+# QFMT 动态乱序版（V10.2）— 每次出现题目都重新随机重排选项
 #
 # 原理：
 #   * 选项 li 带 data-correct="1/0"（判断题带 data-judge="1"）
-#   * 本题首次显示时随机生成顺序并存到 window._v10Order（按题干文本做 key）
-#   * 翻转答案面时 FrontSide 重渲染，应用同一顺序 → 前后一致
-#   * 答案按 data-correct 重算写入 #showAnswer，AFMT 无需改动
+#   * 洗牌逻辑延迟到 setTimeout(0) 执行：
+#       - 此时若 DOM 已有 #resultBanner → 本次渲染是【背面】
+#         → 复用正面刚写入 window._v10Saved[题干] 的顺序，前后一致
+#       - 若没有 resultBanner → 本次是【新一轮正面】→ 强制重新洗牌并覆盖缓存
+#     ⇒ 每次出现该题选项顺序都不同（防背位置），且正反面顺序一致
 #   * 判断题（data-judge 或 ≤2 选项）不打乱
 # ══════════════════════════════════════════════════════════════
 V10_QFMT_DYNAMIC = V10_QFMT.replace(
@@ -192,42 +194,47 @@ V10_QFMT_DYNAMIC = V10_QFMT.replace(
     "{{Answer}}</div>\n"
     "<script>\n"
     "(function(){\n"
-    "  // ★ 动态洗牌：每次出现题目随机选项顺序（同一题本次浏览内保持一致）\n"
-    "  var qDiv = document.getElementById('Question');\n"
-    "  var ol = document.getElementById('ol');\n"
-    "  if(!qDiv || !ol) return;\n"
-    "  var curQ = qDiv.innerText;\n"
-    "  var lis = Array.prototype.slice.call(ol.children);\n"
-    "  var isJudge = !!ol.querySelector('li[data-judge]');\n"
-    "  if(lis.length > 2 && !isJudge){\n"
-    "    if(!window._v10Order){ window._v10Order = {}; }\n"
-    "    var order = window._v10Order[curQ];\n"
-    "    if(!order){\n"
-    "      var idx = [];\n"
-    "      for(var i = 0; i < lis.length; i++){ idx.push(i); }\n"
-    "      for(var i = lis.length - 1; i > 0; i--){\n"
-    "        var j = Math.floor(Math.random() * (i + 1));\n"
-    "        var t = idx[i]; idx[i] = idx[j]; idx[j] = t;\n"
-    "      }\n"
-    "      window._v10Order[curQ] = idx;\n"
-    "      order = idx;\n"
+    "  function v10Shuffle(){\n"
+    "    var qDiv = document.getElementById('Question');\n"
+    "    var ol = document.getElementById('ol');\n"
+    "    if(!qDiv || !ol) return;\n"
+    "    var curQ = qDiv.innerText.trim().slice(0,80);\n"
+    "    var lis = Array.prototype.slice.call(ol.children);\n"
+    "    var isJudge = !!ol.querySelector('li[data-judge]');\n"
+    "    var inBack = !!document.getElementById('resultBanner');\n"
+    "    var order = null;\n"
+    "    if(inBack && !isJudge && lis.length > 2){\n"
+    "      var sv = window._v10Saved && window._v10Saved[curQ];\n"
+    "      if(sv){ order = sv; }\n"
     "    }\n"
-    "    for(var k = 0; k < order.length; k++){ ol.appendChild(lis[order[k]]); }\n"
+    "    if(!order && lis.length > 2 && !isJudge){\n"
+    "      order = [];\n"
+    "      for(var i = 0; i < lis.length; i++){ order.push(i); }\n"
+    "      for(var i = order.length - 1; i > 0; i--){\n"
+    "        var j = Math.floor(Math.random() * (i + 1));\n"
+    "        var t = order[i]; order[i] = order[j]; order[j] = t;\n"
+    "      }\n"
+    "      if(!window._v10Saved){ window._v10Saved = {}; }\n"
+    "      window._v10Saved[curQ] = order;\n"
+    "    }\n"
+    "    if(order && lis.length > 2 && !isJudge){\n"
+    "      for(var k = 0; k < order.length; k++){ ol.appendChild(lis[order[k]]); }\n"
+    "    }\n"
+    "    var items = Array.prototype.slice.call(ol.children);\n"
+    "    var ans = '';\n"
+    "    items.forEach(function(li, idx){\n"
+    "      var letter = String.fromCharCode(65 + idx);\n"
+    "      li.setAttribute('value', letter);\n"
+    "      var inp = li.querySelector('input');\n"
+    "      if(inp){ inp.value = letter; inp.id = letter; }\n"
+    "      var lab = li.querySelector('label');\n"
+    "      if(lab){ lab.setAttribute('for', letter); }\n"
+    "      if(li.getAttribute('data-correct') === '1'){ ans += letter; }\n"
+    "    });\n"
+    "    var sa = document.getElementById('showAnswer');\n"
+    "    if(sa && !isJudge && ans){ sa.innerText = ans; }\n"
     "  }\n"
-    "  // 重新编号 A/B/C/D 并重算答案（非判断题）\n"
-    "  var items = Array.prototype.slice.call(ol.children);\n"
-    "  var ans = '';\n"
-    "  items.forEach(function(li, idx){\n"
-    "    var letter = String.fromCharCode(65 + idx);\n"
-    "    li.setAttribute('value', letter);\n"
-    "    var inp = li.querySelector('input');\n"
-    "    if(inp){ inp.value = letter; inp.id = letter; }\n"
-    "    var lab = li.querySelector('label');\n"
-    "    if(lab){ lab.setAttribute('for', letter); }\n"
-    "    if(li.getAttribute('data-correct') === '1'){ ans += letter; }\n"
-    "  });\n"
-    "  var sa = document.getElementById('showAnswer');\n"
-    "  if(sa && !isJudge && ans){ sa.innerText = ans; }\n"
+    "  setTimeout(v10Shuffle, 0);\n"
     "})();\n"
     "</script>",
     1,
@@ -248,6 +255,8 @@ V10_AFMT = r"""
 
 <script>
 (function(){
+  // ★ V10.2：判分延迟到洗牌之后执行（洗牌 setTimeout 0 → 判分 setTimeout 1）
+  setTimeout(function(){
   var ansDiv = document.getElementById('showAnswer');
   var rawAnswer = ansDiv ? ansDiv.innerText.trim() : '';
   function parseAnswers(raw){
@@ -276,6 +285,7 @@ V10_AFMT = r"""
     else { li.classList.add('faded'); }
   });
   var banner = document.getElementById('resultBanner');
+  if(!banner) return;
   var hasSelection = selected || selectedArr.length > 0;
   var isCorrect = false;
   if(answers.length > 1){
@@ -291,6 +301,7 @@ V10_AFMT = r"""
   } else {
     banner.innerHTML = '<div class="result-banner result-wrong">❌ 回答错误，正确答案已标绿</div>';
   }
+  }, 1);
   // 点击任意位置 → 评为"简单" → 下一题（延迟 400ms 防误触）
   if(!window._v10AfmtReady){
     window._v10AfmtReady = true;
